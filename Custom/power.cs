@@ -186,10 +186,10 @@ class PowerManagementScript : Script
         
         _ownBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.SameGrid, b => b.IsFunctional);
         _attachedBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.OtherGrids, b => b.IsFunctional);
-        _wind = GetBlocks<IMyWindTurbine>();
-        _solar = GetBlocks<IMySolarPanel>();
-        _hydrogenEngines = GetBlocks<IMyPowerProducer>(string.Empty, Location.Everywhere, b => b.BlockDefinition.ToString().Contains("HydrogenEngine"));
-        _reactors = GetBlocks<IMyReactor>();
+        _wind = GetBlocks<IMyWindTurbine>(string.Empty, Location.SameGrid);
+        _solar = GetBlocks<IMySolarPanel>(string.Empty, Location.SameGrid);
+        _hydrogenEngines = GetBlocks<IMyPowerProducer>(string.Empty, Location.SameGrid, b => b.BlockDefinition.ToString().Contains("HydrogenEngine"));
+        _reactors = GetBlocks<IMyReactor>(string.Empty, Location.SameGrid);
         _lcds = GetBlocks<IMyTextPanel>(InfoLCDs, Location.SameGrid);
 
         if (_lcds.Count == 0)
@@ -215,7 +215,7 @@ class PowerManagementScript : Script
         
         text.AppendLine();
         
-        text.AppendLine("Power production:");
+        text.AppendLine("Local power production:");
         AppendPowerProducerListStatus(text, _wind.Cast<IMyPowerProducer>().ToList(), "Wind");
         AppendPowerProducerListStatus(text, _solar.Cast<IMyPowerProducer>().ToList(), "Solar");
         AppendPowerProducerListStatus(text, _hydrogenEngines.Cast<IMyPowerProducer>().ToList(), "Hydrogen");
@@ -253,6 +253,9 @@ class PowerManagementScript : Script
         
         float balanceInOut = curInput - curOutput;
         string balanceInOutSign = (balanceInOut >= 0.01f) ? "+" : " ";
+        
+        text.Append("  ");
+        DisplayPercentageBar(text, storedPercent);
 
         text.AppendLine($"  Stored: {storedPercent}% ({curEnergy:0.#} / {maxEnergy:0.#} MWh)");
         text.AppendLine($"  Trend: {balanceInOutSign}{balanceInOut:0.##} MW ({curInput:0.#} in / {curOutput:0.#} out)");
@@ -276,6 +279,21 @@ class PowerManagementScript : Script
         int outputPercent = (int)(curOutput * 100.0f / maxOutput);
         
         text.AppendLine($"  {type} ({count}): +{curOutput:0.##}/{maxOutput:0.##} MW ({outputPercent}%)");
+    }
+    
+    private void DisplayPercentageBar(StringBuilder text, int percent)
+    {
+        if (percent < 0)
+            percent = 0;
+        else if (percent > 100)
+            percent = 100;
+        
+        text.Append("[");
+        
+        for (int i = 0; i < 20; ++i)
+            text.Append((i < percent / 5) ? "X" : " ");
+        
+        text.AppendLine("]");
     }
 
     private class BatteryGroup
