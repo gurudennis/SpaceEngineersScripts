@@ -68,32 +68,44 @@ public abstract class Script
         SameGrid,
         OtherGrids
     }
-    protected IList<T> GetBlocks<T>(string filter = "", Location location = Location.Everywhere, Func<T, bool> criteria = null) where T : class, IMyTerminalBlock
+    public enum State
+    {
+        Any,
+        Functional,
+        NonFunctional
+    }
+    protected IList<T> GetBlocks<T>(string filter = "", Location location = Location.Everywhere, State state = State.Functional, Func<T, bool> criteria = null) where T : class, IMyTerminalBlock
     {
         if (filter == null || filter == "null")
             return new List<T>();
         
-        Func<T, bool> expandedCriteria = criteria;
+        Func<T, bool> expandedCriteria1 = criteria;
         if (location == Location.SameGrid)
-            expandedCriteria = (b => (b.IsSameConstructAs(Program.Me) && (criteria == null ? true : criteria(b))));
+            expandedCriteria1 = (b => (b.IsSameConstructAs(Program.Me) && (criteria == null ? true : criteria(b))));
         else if (location == Location.OtherGrids)
-            expandedCriteria = (b => (!b.IsSameConstructAs(Program.Me) && (criteria == null ? true : criteria(b))));
+            expandedCriteria1 = (b => (!b.IsSameConstructAs(Program.Me) && (criteria == null ? true : criteria(b))));
+        
+        Func<T, bool> expandedCriteria2 = expandedCriteria1;
+        if (state == State.Functional)
+            expandedCriteria2 = (b => (b.IsFunctional && (expandedCriteria1 == null ? true : expandedCriteria1(b))));
+        else if (state == State.NonFunctional)
+            expandedCriteria2 = (b => (!b.IsFunctional && (expandedCriteria1 == null ? true : expandedCriteria1(b))));
 
         List<T> blocks = new List<T>();
         if (filter == string.Empty || filter == "*")
         {
-            Program.GridTerminalSystem.GetBlocksOfType(blocks, expandedCriteria);
+            Program.GridTerminalSystem.GetBlocksOfType(blocks, expandedCriteria2);
         }
         else
         {
             IMyBlockGroup group = Program.GridTerminalSystem.GetBlockGroupWithName(filter);
             if (group != null)
-                group.GetBlocksOfType(blocks, expandedCriteria);
+                group.GetBlocksOfType(blocks, expandedCriteria2);
             
             if (blocks.Count == 0)
             {
                 T block = Program.GridTerminalSystem.GetBlockWithName(filter) as T;
-                if (block != null && (expandedCriteria == null ? true : expandedCriteria(block)))
+                if (block != null && (expandedCriteria2 == null ? true : expandedCriteria2(block)))
                     blocks.Add(block);
             }
         }
@@ -184,11 +196,11 @@ class PowerManagementScript : Script
         _reactors?.Clear();
         _lcds?.Clear();
         
-        _ownBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.SameGrid, b => b.IsFunctional);
-        _attachedBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.OtherGrids, b => b.IsFunctional);
+        _ownBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.SameGrid);
+        _attachedBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.OtherGrids);
         _wind = GetBlocks<IMyWindTurbine>(string.Empty, Location.SameGrid);
         _solar = GetBlocks<IMySolarPanel>(string.Empty, Location.SameGrid);
-        _hydrogenEngines = GetBlocks<IMyPowerProducer>(string.Empty, Location.SameGrid, b => b.BlockDefinition.ToString().Contains("HydrogenEngine"));
+        _hydrogenEngines = GetBlocks<IMyPowerProducer>(string.Empty, Location.SameGrid, State.Functional, b => b.BlockDefinition.ToString().Contains("HydrogenEngine"));
         _reactors = GetBlocks<IMyReactor>(string.Empty, Location.SameGrid);
         _lcds = GetBlocks<IMyTextPanel>(InfoLCDs, Location.SameGrid);
 
@@ -206,12 +218,14 @@ class PowerManagementScript : Script
         StringBuilder text = new StringBuilder();
         
         text.AppendLine("Local batteries:");
-        AppendBatteryListStatus(text, _ownBatteries);
+        BatteryStats localBatteryStats = GetBatteryStats(_ownBatteries);
+        AppendBatteryListStatus(text, localBatteryStats);
         
         text.AppendLine();
         
         text.AppendLine("Connected batteries:");
-        AppendBatteryListStatus(text, _attachedBatteries);
+        BatteryStats attachedBatteryStats = GetBatteryStats(_attachedBatteries);
+        AppendBatteryListStatus(text, attachedBatteryStats);
         
         text.AppendLine();
         
@@ -224,41 +238,21 @@ class PowerManagementScript : Script
         ForEachBlock(_lcds, lcd => lcd.WriteText(text, false));
     }
     
-    private void AppendBatteryListStatus(StringBuilder text, BatteryGroup batteryGroup)
+    private void AppendBatteryListStatus(StringBuilder text, BatteryStats stats)
     {
-        if (batteryGroup.Batteries.Count == 0)
+        if (stats.Count == 0)
         {
             text.AppendLine("  (none)");
             return;
         }
-        
-        float maxEnergy = 0.0f;
-        float curEnergy = 0.0f;
-        float curInput = 0.0f;
-        float curOutput = 0.0f;
-        ForEachBlock(batteryGroup.Batteries, battery =>
-        {
-            maxEnergy += battery.MaxStoredPower;
-            curEnergy += battery.CurrentStoredPower;
-            curInput += battery.CurrentInput;
-            curOutput += battery.CurrentOutput;
-        });
-        
-        int storedPercent = (int)(curEnergy * 100.0f / maxEnergy);
-        
-        batteryGroup.AvgInput.Add(curInput, 0.25f);
-        batteryGroup.AvgOutput.Add(curOutput, 0.25f);
-        curInput = batteryGroup.AvgInput.Get();
-        curOutput = batteryGroup.AvgOutput.Get();
-        
-        float balanceInOut = curInput - curOutput;
-        string balanceInOutSign = (balanceInOut >= 0.01f) ? "+" : " ";
+
+        string balanceInOutSign = (stats.BalanceInOut >= 0.01f) ? "+" : " ";
         
         text.Append("  ");
-        DisplayPercentageBar(text, storedPercent);
+        DisplayPercentageBar(text, stats.StoredPercent, 50);
 
-        text.AppendLine($"  Stored: {storedPercent}% ({curEnergy:0.#} / {maxEnergy:0.#} MWh)");
-        text.AppendLine($"  Trend: {balanceInOutSign}{balanceInOut:0.##} MW ({curInput:0.#} in / {curOutput:0.#} out)");
+        text.AppendLine($"  Stored: {stats.StoredPercent}% ({stats.CurEnergy:0.#} / {stats.MaxEnergy:0.#} MWh)");
+        text.AppendLine($"  Trend: {balanceInOutSign}{stats.BalanceInOut:0.##} MW ({stats.CurInput:0.#} in / {stats.CurOutput:0.#} out)");
     }
     
     private void AppendPowerProducerListStatus(StringBuilder text, IList<IMyPowerProducer> producers, string type)
@@ -281,7 +275,7 @@ class PowerManagementScript : Script
         text.AppendLine($"  {type} ({count}): +{curOutput:0.##}/{maxOutput:0.##} MW ({outputPercent}%)");
     }
     
-    private void DisplayPercentageBar(StringBuilder text, int percent)
+    private void DisplayPercentageBar(StringBuilder text, int percent, int width)
     {
         if (percent < 0)
             percent = 0;
@@ -290,8 +284,8 @@ class PowerManagementScript : Script
         
         text.Append("[");
         
-        for (int i = 0; i < 20; ++i)
-            text.Append((i < percent / 5) ? "X" : " ");
+        for (int i = 0; i < width; ++i)
+            text.Append((i < percent / (100 / width)) ? "-" : " ");
         
         text.AppendLine("]");
     }
@@ -301,6 +295,42 @@ class PowerManagementScript : Script
         public IList<IMyBatteryBlock> Batteries;
         public RunningAverage AvgInput = new RunningAverage();
         public RunningAverage AvgOutput = new RunningAverage();
+    }
+    
+    private class BatteryStats
+    {
+        public int Count { get; set; }
+        public float MaxEnergy { get; set; }
+        public float CurEnergy { get; set; }
+        public float CurInput { get; set; }
+        public float CurOutput { get; set; }
+        public int StoredPercent { get { return Count == 0 ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
+        public float BalanceInOut { get { return CurInput - CurOutput; } }
+    }
+    
+    private BatteryStats GetBatteryStats(BatteryGroup batteryGroup)
+    {
+        BatteryStats stats = new BatteryStats();
+        
+        if (batteryGroup.Batteries.Count == 0)
+            return stats;
+
+        ForEachBlock(batteryGroup.Batteries, battery =>
+        {
+            ++stats.Count;
+            stats.MaxEnergy += battery.MaxStoredPower;
+            stats.CurEnergy += battery.CurrentStoredPower;
+            stats.CurInput += battery.CurrentInput;
+            stats.CurOutput += battery.CurrentOutput;
+        });
+        
+        batteryGroup.AvgInput.Add(stats.CurInput, 0.25f);
+        batteryGroup.AvgOutput.Add(stats.CurOutput, 0.25f);
+        
+        stats.CurInput = batteryGroup.AvgInput.Get();
+        stats.CurOutput = batteryGroup.AvgOutput.Get();
+        
+        return stats;
     }
 
     private BatteryGroup _ownBatteries = new BatteryGroup();
