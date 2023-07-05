@@ -68,7 +68,7 @@ public abstract class Script
         SameGrid,
         OtherGrids
     }
-    protected IList<T> GetBlocks<T>(string filter, Location location, Func<T, bool> criteria = null) where T : class, IMyTerminalBlock
+    protected IList<T> GetBlocks<T>(string filter = "", Location location = Location.Everywhere, Func<T, bool> criteria = null) where T : class, IMyTerminalBlock
     {
         if (filter == null || filter == "null")
             return new List<T>();
@@ -171,17 +171,25 @@ class PowerManagementScript : Script
 {
     protected override void OnSetUp()
     {
-        Start(UpdateFrequency.Update100, 3, 6);
+        Start(UpdateFrequency.Update100, 3, 9);
     }
     
     protected override void OnDiscover()
     {
         _ownBatteries.Batteries?.Clear();
         _attachedBatteries.Batteries?.Clear();
+        _wind?.Clear();
+        _solar?.Clear();
+        _hydrogenEngines?.Clear();
+        _reactors?.Clear();
         _lcds?.Clear();
         
         _ownBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.SameGrid, b => b.IsFunctional);
         _attachedBatteries.Batteries = GetBlocks<IMyBatteryBlock>(string.Empty, Location.OtherGrids, b => b.IsFunctional);
+        _wind = GetBlocks<IMyWindTurbine>();
+        _solar = GetBlocks<IMySolarPanel>();
+        _hydrogenEngines = GetBlocks<IMyPowerProducer>(string.Empty, Location.Everywhere, b => b.BlockDefinition.ToString().Contains("HydrogenEngine"));
+        _reactors = GetBlocks<IMyReactor>();
         _lcds = GetBlocks<IMyTextPanel>(InfoLCDs, Location.SameGrid);
 
         if (_lcds.Count == 0)
@@ -204,6 +212,14 @@ class PowerManagementScript : Script
         
         text.AppendLine("Connected batteries:");
         AppendBatteryListStatus(text, _attachedBatteries);
+        
+        text.AppendLine();
+        
+        text.AppendLine("Power production:");
+        AppendPowerProducerListStatus(text, _wind.Cast<IMyPowerProducer>().ToList(), "Wind");
+        AppendPowerProducerListStatus(text, _solar.Cast<IMyPowerProducer>().ToList(), "Solar");
+        AppendPowerProducerListStatus(text, _hydrogenEngines.Cast<IMyPowerProducer>().ToList(), "Hydrogen");
+        AppendPowerProducerListStatus(text, _reactors.Cast<IMyPowerProducer>().ToList(), "Nuclear");
 
         ForEachBlock(_lcds, lcd => lcd.WriteText(text, false));
     }
@@ -242,6 +258,26 @@ class PowerManagementScript : Script
         text.AppendLine($"  Trend: {balanceInOutSign}{balanceInOut:0.##} MW ({curInput:0.#} in / {curOutput:0.#} out)");
     }
     
+    private void AppendPowerProducerListStatus(StringBuilder text, IList<IMyPowerProducer> producers, string type)
+    {
+        if (producers.Count == 0)
+            return;
+        
+        int count = 0;
+        float curOutput = 0.0f;
+        float maxOutput = 0.0f;
+        ForEachBlock(producers, producer =>
+        {
+            ++count;
+            curOutput += producer.CurrentOutput;
+            maxOutput += producer.MaxOutput;
+        });
+        
+        int outputPercent = (int)(curOutput * 100.0f / maxOutput);
+        
+        text.AppendLine($"  {type} ({count}): +{curOutput:0.##}/{maxOutput:0.##} MW ({outputPercent}%)");
+    }
+
     private class BatteryGroup
     {
         public IList<IMyBatteryBlock> Batteries;
@@ -251,6 +287,10 @@ class PowerManagementScript : Script
 
     private BatteryGroup _ownBatteries = new BatteryGroup();
     private BatteryGroup _attachedBatteries = new BatteryGroup();
+    private IList<IMyWindTurbine> _wind;
+    private IList<IMySolarPanel> _solar;
+    private IList<IMyPowerProducer> _hydrogenEngines;
+    private IList<IMyReactor> _reactors;
     private IList<IMyTextPanel> _lcds;
 }
 
