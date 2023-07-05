@@ -215,30 +215,35 @@ class PowerManagementScript : Script
 
     protected override void OnTick()
     {
+        PowerSummary powerSummary = GetPowerSummary();
+
+        PrintPowerSummary(powerSummary, _lcds);
+    }
+    
+    private void PrintPowerSummary(PowerSummary powerSummary, IList<IMyTextPanel> lcds)
+    {
         StringBuilder text = new StringBuilder();
         
         text.AppendLine("Local batteries:");
-        BatteryStats localBatteryStats = GetBatteryStats(_ownBatteries);
-        AppendBatteryListStatus(text, localBatteryStats);
+        AppendBatteryListStatus(text, powerSummary.LocalBatteries);
         
         text.AppendLine();
         
         text.AppendLine("Connected batteries:");
-        BatteryStats attachedBatteryStats = GetBatteryStats(_attachedBatteries);
-        AppendBatteryListStatus(text, attachedBatteryStats);
+        AppendBatteryListStatus(text, powerSummary.AttachedBatteries);
         
         text.AppendLine();
         
         text.AppendLine("Local power production:");
-        AppendPowerProducerListStatus(text, _wind.Cast<IMyPowerProducer>().ToList(), "Wind");
-        AppendPowerProducerListStatus(text, _solar.Cast<IMyPowerProducer>().ToList(), "Solar");
-        AppendPowerProducerListStatus(text, _hydrogenEngines.Cast<IMyPowerProducer>().ToList(), "Hydrogen");
-        AppendPowerProducerListStatus(text, _reactors.Cast<IMyPowerProducer>().ToList(), "Nuclear");
+        AppendPowerProducerListStatus(text, powerSummary.WindTurbines, "Wind");
+        AppendPowerProducerListStatus(text, powerSummary.SolarPanels, "Solar");
+        AppendPowerProducerListStatus(text, powerSummary.HydrogenEngines, "Hydrogen");
+        AppendPowerProducerListStatus(text, powerSummary.NuclearReactors, "Nuclear");
 
-        ForEachBlock(_lcds, lcd => lcd.WriteText(text, false));
+        ForEachBlock(lcds, lcd => lcd.WriteText(text, false));
     }
     
-    private void AppendBatteryListStatus(StringBuilder text, BatteryStats stats)
+    private void AppendBatteryListStatus(StringBuilder text, PowerStats stats)
     {
         if (stats.Count == 0)
         {
@@ -249,30 +254,18 @@ class PowerManagementScript : Script
         string balanceInOutSign = (stats.BalanceInOut >= 0.01f) ? "+" : " ";
         
         text.Append("  ");
-        DisplayPercentageBar(text, stats.StoredPercent, 50);
+        DisplayPercentageBar(text, stats.EnergyPercent, 50);
 
-        text.AppendLine($"  Stored: {stats.StoredPercent}% ({stats.CurEnergy:0.#} / {stats.MaxEnergy:0.#} MWh)");
+        text.AppendLine($"  Stored: {stats.EnergyPercent}% ({stats.CurEnergy:0.#} / {stats.MaxEnergy:0.#} MWh)");
         text.AppendLine($"  Trend: {balanceInOutSign}{stats.BalanceInOut:0.##} MW ({stats.CurInput:0.#} in / {stats.CurOutput:0.#} out)");
     }
     
-    private void AppendPowerProducerListStatus(StringBuilder text, IList<IMyPowerProducer> producers, string type)
+    private void AppendPowerProducerListStatus(StringBuilder text, PowerStats stats, string type)
     {
-        if (producers.Count == 0)
+        if (stats.Count == 0)
             return;
-        
-        int count = 0;
-        float curOutput = 0.0f;
-        float maxOutput = 0.0f;
-        ForEachBlock(producers, producer =>
-        {
-            ++count;
-            curOutput += producer.CurrentOutput;
-            maxOutput += producer.MaxOutput;
-        });
-        
-        int outputPercent = (int)(curOutput * 100.0f / maxOutput);
-        
-        text.AppendLine($"  {type} ({count}): +{curOutput:0.##}/{maxOutput:0.##} MW ({outputPercent}%)");
+
+        text.AppendLine($"  {type} ({stats.Count}): +{stats.CurOutput:0.##}/{stats.MaxOutput:0.##} MW ({stats.OutputPercent}%)");
     }
     
     private void DisplayPercentageBar(StringBuilder text, int percent, int width)
@@ -297,20 +290,22 @@ class PowerManagementScript : Script
         public RunningAverage AvgOutput = new RunningAverage();
     }
     
-    private class BatteryStats
+    private class PowerStats
     {
         public int Count { get; set; }
         public float MaxEnergy { get; set; }
         public float CurEnergy { get; set; }
         public float CurInput { get; set; }
         public float CurOutput { get; set; }
-        public int StoredPercent { get { return Count == 0 ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
+        public float MaxOutput { get; set; }
+        public int EnergyPercent { get { return Count == 0 || MaxEnergy == 0.0f ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
+        public int OutputPercent { get { return Count == 0 || MaxOutput == 0.0f ? 0 : (int)(CurOutput * 100.0f / MaxOutput); } }
         public float BalanceInOut { get { return CurInput - CurOutput; } }
     }
     
-    private BatteryStats GetBatteryStats(BatteryGroup batteryGroup)
+    private PowerStats GetPowerStats(BatteryGroup batteryGroup)
     {
-        BatteryStats stats = new BatteryStats();
+        PowerStats stats = new PowerStats();
         
         if (batteryGroup.Batteries.Count == 0)
             return stats;
@@ -331,6 +326,45 @@ class PowerManagementScript : Script
         stats.CurOutput = batteryGroup.AvgOutput.Get();
         
         return stats;
+    }
+    
+    private PowerStats GetPowerStats(IList<IMyPowerProducer> producers)
+    {
+        PowerStats stats = new PowerStats();
+        
+        if (producers.Count == 0)
+            return stats;
+
+        ForEachBlock(producers, producer =>
+        {
+            ++stats.Count;
+            stats.CurOutput += producer.CurrentOutput;
+            stats.MaxOutput += producer.MaxOutput;
+        });
+        
+        return stats;
+    }
+    
+    private class PowerSummary
+    {
+        public PowerStats LocalBatteries { get; set; }
+        public PowerStats AttachedBatteries { get; set; }
+        public PowerStats WindTurbines { get; set; }
+        public PowerStats SolarPanels { get; set; }
+        public PowerStats HydrogenEngines { get; set; }
+        public PowerStats NuclearReactors { get; set; }
+    }
+    
+    PowerSummary GetPowerSummary()
+    {
+        PowerSummary summary = new PowerSummary();
+        summary.LocalBatteries = GetPowerStats(_ownBatteries);
+        summary.AttachedBatteries = GetPowerStats(_attachedBatteries);
+        summary.WindTurbines = GetPowerStats(_wind.Cast<IMyPowerProducer>().ToList());
+        summary.SolarPanels = GetPowerStats(_solar.Cast<IMyPowerProducer>().ToList());
+        summary.HydrogenEngines = GetPowerStats(_hydrogenEngines.Cast<IMyPowerProducer>().ToList());
+        summary.NuclearReactors = GetPowerStats(_reactors.Cast<IMyPowerProducer>().ToList());
+        return summary;
     }
 
     private BatteryGroup _ownBatteries = new BatteryGroup();
