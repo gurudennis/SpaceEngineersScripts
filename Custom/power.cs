@@ -33,7 +33,7 @@ public abstract class Script
     protected abstract void OnSetUp();
     protected virtual void OnTearDown(bool ok) { }
     protected virtual void OnDiscover() { }
-    protected virtual void OnTick() { }
+    protected virtual void OnTick(uint tick) { }
     
     protected enum Severity
     {
@@ -159,7 +159,7 @@ public abstract class Script
             OnDiscover();
         
         if (_tickPeriod > 0 && (_tick % _tickPeriod) == 0)
-            OnTick();
+            OnTick(_tick / _tickPeriod);
     }
     
     private UpdateType UpdateTypeFromUpdateFrequency(UpdateFrequency updateFreq)
@@ -213,15 +213,18 @@ class PowerManagementScript : Script
         Clear();
     }
 
-    protected override void OnTick()
+    protected override void OnTick(uint tick)
     {
         PowerSummary powerSummary = GetPowerSummary();
 
-        PrintPowerSummary(powerSummary, _lcds);
+        PrintPowerSummary(powerSummary, _lcds, tick);
     }
     
-    private void PrintPowerSummary(PowerSummary powerSummary, IList<IMyTextPanel> lcds)
+    private void PrintPowerSummary(PowerSummary powerSummary, IList<IMyTextPanel> lcds, uint tick)
     {
+        if (lcds.Count == 0)
+            return;
+        
         StringBuilder text = new StringBuilder();
         
         text.AppendLine("Local batteries:");
@@ -239,6 +242,13 @@ class PowerManagementScript : Script
         AppendPowerProducerListStatus(text, powerSummary.SolarPanels, "Solar");
         AppendPowerProducerListStatus(text, powerSummary.HydrogenEngines, "Hydrogen");
         AppendPowerProducerListStatus(text, powerSummary.NuclearReactors, "Nuclear");
+        
+        text.AppendLine();
+        
+        for (uint i = 0; i != ((tick % 3) + 1); ++i)
+            text.Append('.');
+
+        text.AppendLine();
 
         ForEachBlock(lcds, lcd => lcd.WriteText(text, false));
     }
@@ -432,6 +442,12 @@ class PowerManagementScript : Script
     private IList<IMyPowerProducer> _hydrogenEngines;
     private IList<IMyReactor> _reactors;
     private IList<IMyTextPanel> _lcds;
+    private PowerStateMachine _powerStateMachine = new PowerStateMachine();
+}
+
+class PowerStateMachine
+{
+    // ...
 }
 
 public void Main(string argument, UpdateType updateSource)
