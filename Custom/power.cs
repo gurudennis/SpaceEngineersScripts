@@ -254,7 +254,7 @@ class PowerManagementScript : Script
         string balanceInOutSign = (stats.BalanceInOut >= 0.01f) ? "+" : " ";
         
         text.Append("  ");
-        DisplayPercentageBar(text, stats.EnergyPercent, 50);
+        AppendPercentageBar(text, stats.EnergyPercent, 50, stats.IsBalanceInOutPositive());
 
         text.AppendLine($"  Stored: {stats.EnergyPercent}% ({stats.CurEnergy:0.#} / {stats.MaxEnergy:0.#} MWh)");
         text.AppendLine($"  Trend: {balanceInOutSign}{stats.BalanceInOut:0.##} MW ({stats.CurInput:0.#} in / {stats.CurOutput:0.#} out)");
@@ -268,7 +268,15 @@ class PowerManagementScript : Script
         text.AppendLine($"  {type} ({stats.Count}): +{stats.CurOutput:0.##}/{stats.MaxOutput:0.##} MW ({stats.OutputPercent}%)");
     }
     
-    private void DisplayPercentageBar(StringBuilder text, int percent, int width)
+    private bool? IsPositive(float value, float deviation = 0.02f)
+    {
+        if (value > -deviation && value < deviation)
+            return null;
+        
+        return value > 0.0f;
+    }
+    
+    private void AppendPercentageBar(StringBuilder text, int percent, int width, bool? growing = null)
     {
         if (percent < 0)
             percent = 0;
@@ -278,8 +286,25 @@ class PowerManagementScript : Script
         text.Append("[");
         
         for (int i = 0; i < width; ++i)
-            text.Append((i < percent / (100 / width)) ? "-" : " ");
-        
+        {
+            char c = ' ';
+            int threshold = percent / (100 / width);
+            bool isOnlySymbol = (growing != null && i == 0 && i == threshold);
+            if (i < threshold || isOnlySymbol)
+            {
+                if (growing != null && (i == threshold - 1 || isOnlySymbol))
+                {
+                    c = ((bool)growing) ? '>' : '<';
+                }
+                else
+                {
+                    c = '-';
+                }
+                
+                text.Append(c);
+            }
+        }
+
         text.AppendLine("]");
     }
 
@@ -301,6 +326,7 @@ class PowerManagementScript : Script
         public int EnergyPercent { get { return Count == 0 || MaxEnergy == 0.0f ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
         public int OutputPercent { get { return Count == 0 || MaxOutput == 0.0f ? 0 : (int)(CurOutput * 100.0f / MaxOutput); } }
         public float BalanceInOut { get { return CurInput - CurOutput; } }
+        public bool? IsBalanceInOutPositive() { return IsPositive(BalanceInOut, 0.02f); }
     }
     
     private PowerStats GetPowerStats(BatteryGroup batteryGroup)
