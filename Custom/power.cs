@@ -253,11 +253,17 @@ class PowerManagementScript : Script
 
         string balanceInOutSign = (stats.BalanceInOut >= 0.01f) ? "+" : " ";
         
+        bool? isBalanceInOutSubstantiallyPositive = stats.IsBalanceInOutSubstantiallyPositive();
+        string chargedStrValue = GetTimeStr(Math.Abs(stats.GetSecondsToFullEnergy()));
+        string chargedStr = (isBalanceInOutSubstantiallyPositive == null) ? "  No substantial change." :
+            ((bool)isBalanceInOutSubstantiallyPositive ? $"  Full in {chargedStrValue}." : $"  Empty in {chargedStrValue}.");
+        
         text.Append("  ");
-        AppendPercentageBar(text, stats.EnergyPercent, 50, stats.IsBalanceInOutPositive());
+        AppendPercentageBar(text, stats.EnergyPercent, 50, isBalanceInOutSubstantiallyPositive);
 
         text.AppendLine($"  Stored: {stats.EnergyPercent}% ({stats.CurEnergy:0.#} / {stats.MaxEnergy:0.#} MWh)");
         text.AppendLine($"  Trend: {balanceInOutSign}{stats.BalanceInOut:0.##} MW ({stats.CurInput:0.#} in / {stats.CurOutput:0.#} out)");
+        text.AppendLine(chargedStr);
     }
     
     private void AppendPowerProducerListStatus(StringBuilder text, PowerStats stats, string type)
@@ -268,7 +274,7 @@ class PowerManagementScript : Script
         text.AppendLine($"  {type} ({stats.Count}): +{stats.CurOutput:0.##}/{stats.MaxOutput:0.##} MW ({stats.OutputPercent}%)");
     }
     
-    private bool? IsPositive(float value, float deviation = 0.02f)
+    private static bool? IsSubstantiallyPositive(float value, float deviation = 0.02f)
     {
         if (value > -deviation && value < deviation)
             return null;
@@ -307,6 +313,23 @@ class PowerManagementScript : Script
 
         text.AppendLine("]");
     }
+    
+    private string GetTimeStr(int seconds)
+    {
+        if (seconds < 60)
+            return seconds == 1 ? $"1 second" : $"{seconds} seconds";
+        
+        int minutes = seconds / 60;
+        if (minutes < 60)
+            return minutes == 1 ? $"1 minute" : $"{minutes} minutes";
+        
+        int hours = minutes / 60;
+        if (hours < 24)
+            return hours == 1 ? $"1 hour" : $"{hours} hours";
+        
+        int days = hours / 24;
+        return days == 1 ? $"1 day" : $"{days} days";
+    }
 
     private class BatteryGroup
     {
@@ -326,7 +349,16 @@ class PowerManagementScript : Script
         public int EnergyPercent { get { return Count == 0 || MaxEnergy == 0.0f ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
         public int OutputPercent { get { return Count == 0 || MaxOutput == 0.0f ? 0 : (int)(CurOutput * 100.0f / MaxOutput); } }
         public float BalanceInOut { get { return CurInput - CurOutput; } }
-        public bool? IsBalanceInOutPositive() { return IsPositive(BalanceInOut, 0.02f); }
+        public bool? IsBalanceInOutSubstantiallyPositive() { return PowerManagementScript.IsSubstantiallyPositive(BalanceInOut, 0.02f); }
+        public int GetSecondsToFullEnergy()
+        {
+            if (Count == 0 || MaxEnergy == 0.0f)
+                return 0;
+            
+            bool upwardTrend = (BalanceInOut > 0.0f);
+            float leftToGoInMWSec = (upwardTrend ? (MaxEnergy - CurEnergy) : CurEnergy) * 60.0f * 60.0f;
+            return (int)(leftToGoInMWSec / BalanceInOut);
+        }
     }
     
     private PowerStats GetPowerStats(BatteryGroup batteryGroup)
