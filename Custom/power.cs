@@ -499,6 +499,7 @@ class PowerStateMachine
         
         _status.State = State.Green;
         _status.CyclesInState = 0;
+        StateChanged = false;
     }
     
     public enum State
@@ -516,12 +517,15 @@ class PowerStateMachine
     
     public Status Update(int secondsToFullEnergy, int energyStoredPercent)
     {
+        StateChanged = false;
+        
         for (int i = 0; i < _stateCount; ++i)
         {
             if (ShouldSwitchToState((State)i, secondsToFullEnergy, energyStoredPercent))
             {
                 _status.State = (State)i;
                 _status.CyclesInState = 0;
+                StateChanged = true;
                 return _status;
             }
         }
@@ -530,6 +534,9 @@ class PowerStateMachine
         
         return _status;
     }
+    
+    public Status GetStatus() { return _status; }
+    public bool StateChanged { get; private set; }
     
     private bool ShouldSwitchToState(State state, int secondsToFullEnergy, int energyStoredPercent)
     {
