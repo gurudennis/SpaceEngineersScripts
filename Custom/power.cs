@@ -2,6 +2,16 @@
 // Configuration
 ///////////////////////////////////////
 
+private static bool EnablePowerManagement = true;
+
+private static bool PreferToSpendHydrogenOverUranium = true;
+
+private static int MinHydrogenReservePercent = 10;
+
+private static int PanicEnergyLevelPercent = 5;
+
+private static int PanicTimeToZeroEnergySec = 15 * 60;
+
 private static string InfoLCDs = "Base Power Management LCD";
 
 ///////////////////////////////////////
@@ -19,7 +29,7 @@ public abstract class Script
             if (Program.Runtime.UpdateFrequency != UpdateFrequency.None && (updateSource & UpdateTypeFromUpdateFrequency(Program.Runtime.UpdateFrequency)) != 0)
                 OnTickScript();
             else
-                SetUpScript(argument);
+                SetUpScript(argument, updateSource);
         }
         catch (Exception ex)
         {
@@ -30,7 +40,7 @@ public abstract class Script
         }
     }
     
-    protected abstract void OnSetUp();
+    protected abstract void OnSetUp(MyCommandLine cmdLine, UpdateType updateSource);
     protected virtual void OnTearDown(bool ok) { }
     protected virtual void OnDiscover() { }
     protected virtual void OnTick(uint tick) { }
@@ -132,13 +142,13 @@ public abstract class Script
         private float _avg;
     }
     
-    private void SetUpScript(string argument)
+    private void SetUpScript(string argument, UpdateType updateSource)
     {
         CmdLine = new MyCommandLine();
         if (!string.IsNullOrEmpty(argument) && !CmdLine.TryParse(argument))
             throw new Exception($"Failed to parse command line: {argument}");
         
-        OnSetUp();
+        OnSetUp(CmdLine, updateSource);
         OnDiscover();
     }
 
@@ -179,9 +189,9 @@ public abstract class Script
     private uint _tick = 0;
 }
 
-class PowerManagementScript : Script
+public class PowerManagementScript : Script
 {
-    protected override void OnSetUp()
+    protected override void OnSetUp(MyCommandLine cmdLine, UpdateType updateSource)
     {
         Start(UpdateFrequency.Update100, 3, 9);
     }
@@ -218,6 +228,16 @@ class PowerManagementScript : Script
         PowerSummary powerSummary = GetPowerSummary();
 
         PrintPowerSummary(powerSummary, _lcds, tick);
+        
+        ManagePower(powerSummary);
+    }
+    
+    private void ManagePower(PowerSummary powerSummary)
+    {
+        if (!EnablePowerManagement)
+            return;
+        
+        // ...
     }
     
     private void PrintPowerSummary(PowerSummary powerSummary, IList<IMyTextPanel> lcds, uint tick)
@@ -359,15 +379,29 @@ class PowerManagementScript : Script
         public int EnergyPercent { get { return Count == 0 || MaxEnergy == 0.0f ? 0 : (int)(CurEnergy * 100.0f / MaxEnergy); } }
         public int OutputPercent { get { return Count == 0 || MaxOutput == 0.0f ? 0 : (int)(CurOutput * 100.0f / MaxOutput); } }
         public float BalanceInOut { get { return CurInput - CurOutput; } }
-        public bool? IsBalanceInOutSubstantiallyPositive() { return PowerManagementScript.IsSubstantiallyPositive(BalanceInOut, 0.02f); }
+        
+        public bool? IsBalanceInOutSubstantiallyPositive()
+        {
+            if (Math.Abs(GetSecondsToFullEnergy()) >= MaxSignificantSeconds)
+                return null;
+            
+            return PowerManagementScript.IsSubstantiallyPositive(BalanceInOut, 0.02f);
+        }
+        
         public int GetSecondsToFullEnergy()
         {
-            if (Count == 0 || MaxEnergy == 0.0f)
+            if (Count == 0 || MaxEnergy == 0.0f || IsSubstantiallyPositive(BalanceInOut, 0.0001f) == null)
                 return 0;
             
             bool upwardTrend = (BalanceInOut > 0.0f);
             float leftToGoInMWSec = (upwardTrend ? (MaxEnergy - CurEnergy) : CurEnergy) * 60.0f * 60.0f;
-            return (int)(leftToGoInMWSec / BalanceInOut);
+            int result = (int)(leftToGoInMWSec / BalanceInOut);
+            if (result > MaxSignificantSeconds)
+                result = MaxSignificantSeconds;
+            else if (result < MaxSignificantSeconds)
+                result = MaxSignificantSeconds;
+            
+            return result;
         }
     }
     
@@ -423,7 +457,7 @@ class PowerManagementScript : Script
         public PowerStats NuclearReactors { get; set; }
     }
     
-    PowerSummary GetPowerSummary()
+    private PowerSummary GetPowerSummary()
     {
         PowerSummary summary = new PowerSummary();
         summary.LocalBatteries = GetPowerStats(_ownBatteries);
@@ -434,6 +468,8 @@ class PowerManagementScript : Script
         summary.NuclearReactors = GetPowerStats(_reactors.Cast<IMyPowerProducer>().ToList());
         return summary;
     }
+    
+    private const int MaxSignificantSeconds = 31 * 24 * 60 * 60; // a month
 
     private BatteryGroup _ownBatteries = new BatteryGroup();
     private BatteryGroup _attachedBatteries = new BatteryGroup();
@@ -442,12 +478,89 @@ class PowerManagementScript : Script
     private IList<IMyPowerProducer> _hydrogenEngines;
     private IList<IMyReactor> _reactors;
     private IList<IMyTextPanel> _lcds;
-    private PowerStateMachine _powerStateMachine = new PowerStateMachine();
+    private PowerStateMachine _powerStateMachine = new PowerStateMachine(PanicEnergyLevelPercent, PanicTimeToZeroEnergySec);
 }
 
 class PowerStateMachine
 {
-    // ...
+    public PowerStateMachine(int panicEnergyLevelPercent, int panicTimeToZeroEnergySec)
+    {
+        _states[0].secondsDown = panicTimeToZeroEnergySec;
+        _states[0].percentDown = panicEnergyLevelPercent;
+        _states[0].percentUp = panicEnergyLevelPercent + 5;
+        
+        _states[1].secondsDown = panicTimeToZeroEnergySec * 2;
+        _states[1].percentDown = panicEnergyLevelPercent + 5;
+        _states[1].percentUp = panicEnergyLevelPercent + 10;
+        
+        _states[2].secondsDown = panicTimeToZeroEnergySec * 3;
+        _states[2].percentDown = panicEnergyLevelPercent + 15;
+        _states[2].percentUp = panicEnergyLevelPercent + 20;
+        
+        _status.State = State.Green;
+        _status.CyclesInState = 0;
+    }
+    
+    public enum State
+    {
+        Red,
+        Yellow,
+        Green
+    }
+    
+    public struct Status
+    {
+        public State State { get; set; }
+        public int CyclesInState { get; set; }
+    }
+    
+    public Status Update(int secondsToFullEnergy, int energyStoredPercent)
+    {
+        for (int i = 0; i < _stateCount; ++i)
+        {
+            if (ShouldSwitchToState((State)i, secondsToFullEnergy, energyStoredPercent))
+            {
+                _status.State = (State)i;
+                _status.CyclesInState = 0;
+                return _status;
+            }
+        }
+        
+        ++_status.CyclesInState;
+        
+        return _status;
+    }
+    
+    private bool ShouldSwitchToState(State state, int secondsToFullEnergy, int energyStoredPercent)
+    {
+        if (state == _status.State)
+            return false;
+        
+        StateInfo info = _states[(int)state];
+        
+        bool up = ((int)state) > ((int)_status.State);
+        int secondsThreshold = up ? 0 : info.secondsDown;
+        int percentThreshold = up ? info.percentUp : info.percentDown;
+        Func<int, int, bool> comparer = up ?
+            new Func<int, int, bool>((v1, v2) => { return v1 >= v2; }) :
+            new Func<int, int, bool>((v1, v2) => { return v1 <= v2; });
+        
+        if (comparer(secondsToFullEnergy, secondsThreshold) || comparer(energyStoredPercent, percentThreshold))
+            return true;
+        
+        return false;
+    }
+    
+    private struct StateInfo
+    {
+        public int secondsDown;
+        public int percentDown;
+        public int percentUp;
+    }
+    
+    private const int _stateCount = ((int)State.Green) + 1;
+    private readonly StateInfo[] _states = new StateInfo[_stateCount];
+    private Status _status = new Status();
 }
 
 public void Main(string argument, UpdateType updateSource)
