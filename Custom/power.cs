@@ -237,6 +237,8 @@ public class PowerManagementScript : Script
         if (!EnablePowerManagement)
             return;
         
+        //Status status = _script.Update(powerSummary.LocalBatteries.GetSecondsToFullEnergy(), powerSummary.LocalBatteries.EnergyPercent);
+        
         // ...
     }
     
@@ -398,8 +400,8 @@ public class PowerManagementScript : Script
             int result = (int)(leftToGoInMWSec / BalanceInOut);
             if (result > MaxSignificantSeconds)
                 result = MaxSignificantSeconds;
-            else if (result < MaxSignificantSeconds)
-                result = MaxSignificantSeconds;
+            else if (result < -MaxSignificantSeconds)
+                result = -MaxSignificantSeconds;
             
             return result;
         }
