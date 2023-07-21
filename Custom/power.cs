@@ -338,9 +338,13 @@ public class PowerManagementScript : Script
                 {
                     c = '-';
                 }
-                
-                text.Append(c);
             }
+            else
+            {
+                c = ' ';
+            }
+            
+            text.Append(c);
         }
 
         text.AppendLine("]");
@@ -423,8 +427,8 @@ public class PowerManagementScript : Script
             stats.CurOutput += battery.CurrentOutput;
         });
         
-        batteryGroup.AvgInput.Add(stats.CurInput, 0.25f);
-        batteryGroup.AvgOutput.Add(stats.CurOutput, 0.25f);
+        batteryGroup.AvgInput.Add(stats.CurInput, 0.33f);
+        batteryGroup.AvgOutput.Add(stats.CurOutput, 0.33f);
         
         stats.CurInput = batteryGroup.AvgInput.Get();
         stats.CurOutput = batteryGroup.AvgOutput.Get();
