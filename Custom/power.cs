@@ -3,16 +3,14 @@
 ///////////////////////////////////////
 
 private static bool EnablePowerManagement = true;
-
-private static bool PreferToSpendHydrogenOverUranium = true;
-
+private static bool PreferToSpendHydrogenOverUranium = false;
 private static int MinHydrogenReservePercent = 10;
 
 private static int PanicEnergyLevelPercent = 5;
-
 private static int PanicTimeToZeroEnergySec = 15 * 60;
 
-private static string InfoLCDs = "Base Power Management LCD";
+private static string InfoLCDs = "Power Management LCD (Goliath)";
+private static string StatusLights = "Power Management Light (Goliath)";
 
 ///////////////////////////////////////
 // Code - do not modify
@@ -237,7 +235,12 @@ public class PowerManagementScript : Script
         if (!EnablePowerManagement)
             return;
         
-        //Status status = _script.Update(powerSummary.LocalBatteries.GetSecondsToFullEnergy(), powerSummary.LocalBatteries.EnergyPercent);
+        int secondsToFullEnergy = powerSummary.LocalBatteries.GetSecondsToFullEnergy();
+        PowerStateMachine.Status status = _powerStateMachine.Update(secondsToFullEnergy, powerSummary.LocalBatteries.EnergyPercent);
+        
+        Print($"Energy level: {powerSummary.LocalBatteries.EnergyPercent}%");
+        Print($"Time to full: {GetTimeStr(secondsToFullEnergy)}");
+        Print($"Status: {status}");
         
         // ...
     }
@@ -352,19 +355,26 @@ public class PowerManagementScript : Script
     
     private string GetTimeStr(int seconds)
     {
+        string prefix = string.Empty;
+        if (seconds < 0)
+        {
+            prefix = "-";
+            seconds = Math.Abs(seconds);
+        }
+        
         if (seconds < 60)
-            return seconds == 1 ? $"1 second" : $"{seconds} seconds";
+            return seconds == 1 ? $"{prefix}1 second" : $"{prefix}{seconds} seconds";
         
         int minutes = seconds / 60;
         if (minutes < 60)
-            return minutes == 1 ? $"1 minute" : $"{minutes} minutes";
+            return minutes == 1 ? $"{prefix}1 minute" : $"{prefix}{minutes} minutes";
         
         int hours = minutes / 60;
         if (hours < 24)
-            return hours == 1 ? $"1 hour" : $"{hours} hours";
+            return hours == 1 ? $"{prefix}1 hour" : $"{prefix}{hours} hours";
         
         int days = hours / 24;
-        return days == 1 ? $"1 day" : $"{days} days";
+        return days == 1 ? $"{prefix}1 day" : $"{prefix}{days} days";
     }
 
     private class BatteryGroup
@@ -519,6 +529,7 @@ class PowerStateMachine
     {
         public State State { get; set; }
         public int CyclesInState { get; set; }
+        public override string ToString() { return $"State={State}, CyclesInState={CyclesInState}"; }
     }
     
     public Status Update(int secondsToFullEnergy, int energyStoredPercent)
@@ -558,7 +569,7 @@ class PowerStateMachine
             new Func<int, int, bool>((v1, v2) => { return v1 >= v2; }) :
             new Func<int, int, bool>((v1, v2) => { return v1 <= v2; });
         
-        if (comparer(secondsToFullEnergy, secondsThreshold) || comparer(energyStoredPercent, percentThreshold))
+        if (comparer(Math.Abs(secondsToFullEnergy), secondsThreshold) || comparer(energyStoredPercent, percentThreshold))
             return true;
         
         return false;
